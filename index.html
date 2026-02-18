@@ -46,26 +46,40 @@
             });
         });
 
-        btn.addEventListener('click', async () => {
-            btn.style.display = 'none'; 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" } 
-                });
-                videoElement.srcObject = stream;
-                await videoElement.play();
-                
-                const process = async () => {
-                    await hands.send({image: videoElement});
-                    requestAnimationFrame(process);
-                };
-                process();
-                
-                if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
-            } catch (err) {
-                alert("CAMERA ERROR: " + err.name + " - " + err.message);
+btn.addEventListener('click', async () => {
+    btn.style.display = 'none'; 
+    try {
+        // Try the "Strict" way first
+        const constraints = {
+            video: {
+                facingMode: { exact: "environment" }
             }
-        });
-    </script>
+        };
+        
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e) {
+            // Fallback: If "exact" fails, try the "ideal" way
+            console.log("Exact failed, trying ideal...");
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment" }
+            });
+        }
+
+        videoElement.srcObject = stream;
+        await videoElement.play();
+        
+        const process = async () => {
+            await hands.send({image: videoElement});
+            requestAnimationFrame(process);
+        };
+        process();
+        
+        if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+    } catch (err) {
+        alert("CAMERA ERROR: " + err.name + " - " + err.message);
+    }
+});    </script>
 </body>
 </html>
