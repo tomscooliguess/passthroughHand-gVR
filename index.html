@@ -39,39 +39,50 @@
         let scene, camera, rendererL, rendererR;
         let leftHand, rightHand;
 
-        function init3D() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, (window.innerWidth / 2) / window.innerHeight, 0.01, 100);
-            camera.position.z = 0.5; // Moved closer for this specific model
+      function init3D() {
+    scene = new THREE.Scene();
+    
+    // Increase FOV and Far plane so the hand doesn't clip
+    camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.1, 1000);
+    // Move camera back (Z+) so the hand looks smaller and fits in view
+    camera.position.set(0, 0, 3); 
 
-            const light = new THREE.DirectionalLight(0xffffff, 1);
-            light.position.set(0, 1, 2);
-            scene.add(light);
-            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(0, 1, 5);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-            const loader = new THREE.GLTFLoader();
-            loader.load('hand_for_vr.glb', (gltf) => {
-                leftHand = gltf.scene;
-                leftHand.scale.set(0.5, 0.5, 0.5); // Adjusted for hand_for_vr scale
-                scene.add(leftHand);
+    const loader = new THREE.GLTFLoader();
+    loader.load('hand_for_vr.glb', (gltf) => {
+        leftHand = gltf.scene;
+        
+        // SHRINK THE MODEL: From 2.0 down to 0.3
+        leftHand.scale.set(0.3, 0.3, 0.3); 
+        
+        // Center the model's pivot point if it's off-center
+        const box = new THREE.Box3().setFromObject(leftHand);
+        const center = box.getCenter(new THREE.Vector3());
+        leftHand.position.sub(center); 
+        
+        scene.add(leftHand);
 
-                rightHand = leftHand.clone();
-                // Flip the clone to make it a right hand
-                rightHand.scale.x *= -1;
-                scene.add(rightHand);
-                
-                leftHand.visible = rightHand.visible = false;
-            });
+        rightHand = leftHand.clone();
+        rightHand.scale.x *= -1; // Flip for right hand
+        scene.add(rightHand);
+        
+        leftHand.visible = rightHand.visible = false;
+    });
 
-            rendererL = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-            rendererR = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-            [rendererL, rendererR].forEach((r, i) => {
-                r.setSize(window.innerWidth / 2, window.innerHeight);
-                r.domElement.className = "fg-canvas";
-                document.getElementsByClassName('view')[i].appendChild(r.domElement);
-            });
-        }
-
+    rendererL = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    rendererR = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    
+    [rendererL, rendererR].forEach((r, i) => {
+        r.setSize(window.innerWidth / 2, window.innerHeight);
+        r.setPixelRatio(window.devicePixelRatio);
+        r.domElement.className = "fg-canvas";
+        document.getElementsByClassName('view')[i].appendChild(r.domElement);
+    });
+}
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
         hands.setOptions({ maxNumHands: 2, modelComplexity: 1 });
 
@@ -95,13 +106,13 @@
                         model.visible = true;
                         const wrist = landmarks[0];
                         
-                        // Precise mapping for the new model
-                        const targetX = (wrist.x - 0.5) * 1.5;
-                        const targetY = -(wrist.y - 0.5) * 1.2;
-                        
+                  // Inside results.multiHandLandmarks.forEach:
+                        const targetX = (wrist.x - 0.5) * 4; // Wider range
+                        const targetY = -(wrist.y - 0.5) * 3; // Taller range
+
                         model.position.x += (targetX - model.position.x) * 0.4;
                         model.position.y += (targetY - model.position.y) * 0.4;
-                        model.position.z = -wrist.z * 1.5;
+                        model.position.z = -wrist.z * 10;    // Exaggerate depth so it moves forward/back
 
                         // Basic tilt based on index finger position
                         const indexFinger = landmarks[5];
