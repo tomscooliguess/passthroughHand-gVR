@@ -26,7 +26,13 @@
         const ctxs = canvases.map(c => c.getContext('2d'));
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+     
+hands.setOptions({ 
+    maxNumHands: 2,
+    modelComplexity: 0, 
+    minDetectionConfidence: 0.5, 
+    minTrackingConfidence: 0.5 
+});
         
         hands.onResults((results) => {
             canvases.forEach((canvas, i) => {
@@ -60,7 +66,7 @@ btn.addEventListener('click', async () => {
         try {
             stream = await navigator.mediaDevices.getUserMedia(constraints);
         } catch (e) {
-            // Fallback: If "exact" fails, try the "ideal" way
+            
             console.log("Exact failed, trying ideal...");
             stream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: "environment" }
@@ -69,12 +75,15 @@ btn.addEventListener('click', async () => {
 
         videoElement.srcObject = stream;
         await videoElement.play();
-        
-        const process = async () => {
-            await hands.send({image: videoElement});
-            requestAnimationFrame(process);
-        };
-        process();
+
+let skipFrame = false;
+const process = async () => {
+    if (!skipFrame) {
+        await hands.send({image: videoElement});
+    }
+    skipFrame = !skipFrame; 
+    requestAnimationFrame(process);
+};
         
         if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
     } catch (err) {
