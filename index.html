@@ -61,9 +61,17 @@
 
     hands.onResults(onResults);
 
+   // Alternative "Aggressive" version:
     const camera = new Camera(videoElement, {
-        onFrame: async () => {
+      onFrame: async () => {
         await hands.send({image: videoElement});
+    },
+    video: {
+        facingMode: { exact: "environment" }
+    },
+    width: 1280,
+    height: 720
+});
     },
     facingMode: 'environment', 
     width: 1280,
