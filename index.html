@@ -3,27 +3,21 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Neon Pulse VR Hands</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        body { margin: 0; background: #000; overflow: hidden; }
         .view-container { display: flex; width: 100vw; height: 100vh; }
-        .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #222; }
-        .bg-canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; z-index: 1; }
-        .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 2; pointer-events: none; }
+        .view { width: 50%; height: 100%; position: relative; overflow: hidden; }
+        .bg-canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; }
+        .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 10; pointer-events: none; }
         video { display: none; }
-        #btn { 
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-            z-index: 1000; padding: 20px 40px; background: #00ffcc; color: #000; 
-            border: none; border-radius: 50px; font-weight: bold; cursor: pointer;
-            box-shadow: 0 0 20px #00ffcc;
-        }
+        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px 40px; background: #00ffcc; border: none; border-radius: 50px; font-weight: bold; }
     </style>
 </head>
 <body>
-    <button id="btn">START NEON VR</button>
-    <video id="input_video" playsinline webkit-playsinline muted></video>
+    <button id="btn">CALIBRATE & START</button>
+    <video id="input_video" playsinline muted></video>
     <div class="view-container">
         <div class="view"><canvas class="bg-canvas" id="bg_l"></canvas></div>
         <div class="view"><canvas class="bg-canvas" id="bg_r"></canvas></div>
@@ -39,20 +33,15 @@
 
         function init3D() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, (window.innerWidth / 2) / window.innerHeight, 0.01, 100);
+            
+            // ADJUSTED FOV: Lowering FOV reduces the "stretching" effect at screen edges
+            camera = new THREE.PerspectiveCamera(60, (window.innerWidth / 2) / window.innerHeight, 0.1, 100);
             camera.position.set(0, 0, 2);
 
-            // Create a pool of 42 "Neon Tubes" (21 per hand)
-            // Each tube is a Cylinder that we will stretch between joints
-            const tubeGeo = new THREE.CylinderGeometry(0.008, 0.008, 1, 6);
-            
+            const tubeGeo = new THREE.CylinderGeometry(0.012, 0.012, 1, 8);
             for (let i = 0; i < 42; i++) {
-                const material = new THREE.MeshBasicMaterial({
-                    color: i < 21 ? 0x00ffcc : 0xff00ff, // Cyan for Left, Magenta for Right
-                    transparent: true,
-                    opacity: 0.8
-                });
-                const mesh = new THREE.Mesh(tubeGeo, material);
+                const mat = new THREE.MeshBasicMaterial({ color: i < 21 ? 0x00ffff : 0xff00ff });
+                const mesh = new THREE.Mesh(tubeGeo, mat);
                 mesh.visible = false;
                 scene.add(mesh);
                 bones.push(mesh);
@@ -66,51 +55,37 @@
             });
         }
 
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
+        // Logic to connect joints
+        const pairs = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
-        // Connection map for bones (Wrist to fingers)
-        const connections = [
-            [0,1],[1,2],[2,3],[3,4], // Thumb
-            [0,5],[5,6],[6,7],[7,8], // Index
-            [0,9],[9,10],[10,11],[11,12], // Middle
-            [0,13],[13,14],[14,15],[15,16], // Ring
-            [0,17],[17,18],[18,19],[19,20], // Pinky
-            [5,9],[9,13],[13,17] // Palm
-        ];
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.8 });
 
         hands.onResults((results) => {
             bgCtxs.forEach((ctx, i) => {
-                if (bgCanvases[i].width !== video.videoWidth) {
-                    bgCanvases[i].width = video.videoWidth; bgCanvases[i].height = video.videoHeight;
-                }
-                ctx.drawImage(results.image, 0, 0, bgCanvases[i].width, bgCanvases[i].height);
+                bgCanvases[i].width = video.videoWidth; bgCanvases[i].height = video.videoHeight;
+                ctx.drawImage(results.image, 0, 0);
             });
 
             bones.forEach(b => b.visible = false);
 
             if (results.multiHandLandmarks) {
                 results.multiHandLandmarks.forEach((landmarks, hIdx) => {
-                    const isRight = results.multiHandedness[hIdx].label === 'Right';
-                    const boneOffset = isRight ? 21 : 0;
-
-                    connections.forEach((conn, cIdx) => {
-                        const bone = bones[boneOffset + cIdx];
+                    const offset = hIdx * 21;
+                    pairs.forEach((pair, pIdx) => {
+                        const bone = bones[offset + pIdx];
                         if (!bone) return;
 
-                        const p1 = landmarks[conn[0]];
-                        const p2 = landmarks[conn[1]];
-
-                        // Convert landmarks to 3D Space
-                        const start = new THREE.Vector3((p1.x - 0.5) * 3.5, -(p1.y - 0.5) * 2.5, -p1.z * 4);
-                        const end = new THREE.Vector3((p2.x - 0.5) * 3.5, -(p2.y - 0.5) * 2.5, -p2.z * 4);
-
-                        // Position & Stretch bone between joints
-                        const distance = start.distanceTo(end);
-                        bone.position.copy(start.clone().lerp(end, 0.5));
-                        bone.scale.set(1, distance, 1);
-                        bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
+                        // FIX: Precise Coordinate Mapping
+                        // We use a tighter multiplier (3.0 instead of 4.0) to match the background video scale
+                        const get3D = (p) => new THREE.Vector3((p.x - 0.5) * 3.1, -(p.y - 0.5) * 2.3, -p.z * 3);
                         
+                        const start = get3D(landmarks[pair[0]]);
+                        const end = get3D(landmarks[pair[1]]);
+
+                        bone.position.copy(start.clone().lerp(end, 0.5));
+                        bone.scale.set(1, start.distanceTo(end), 1);
+                        bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
                         bone.visible = true;
                     });
                 });
@@ -121,9 +96,7 @@
 
         async function start() {
             document.getElementById('btn').style.display = 'none';
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment", width: 1280, height: 720 }
-            });
+            const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment", width: 1280, height: 720}});
             video.srcObject = stream;
             await video.play();
             const loop = async () => { await hands.send({image: video}); requestAnimationFrame(loop); };
