@@ -1,6 +1,7 @@
 # passthroughHand-gVR
 by tom and a bit of gemini...
-##Welcome!!
+
+## Welcome!!
 This is a simple project made with python, later converted into a website, which uses mediapipe hand tracking to track hands and the camera to make a "passthrough" effect. I'll probably make a UI soon enough, although it might get a bit complicated0
 
 
