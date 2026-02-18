@@ -20,68 +20,74 @@
   <div class="view"><canvas id="canvas_right"></canvas></div>
 
   <script>
-    const videoElement = document.getElementById('input_video');
-    const canvasLeft = document.getElementById('canvas_left');
-    const canvasRight = document.getElementById('canvas_right');
-    const ctxL = canvasLeft.getContext('2d');
-    const ctxR = canvasRight.getContext('2d');
+   const videoElement = document.getElementById('input_video');
+const canvasLeft = document.getElementById('canvas_left');
+const canvasRight = document.getElementById('canvas_right');
+const ctxL = canvasLeft.getContext('2d');
+const ctxR = canvasRight.getContext('2d');
 
-    function onResults(results) {
-      // Set canvas size to match video
-      if (canvasLeft.width !== videoElement.videoWidth) {
-          canvasLeft.width = canvasRight.width = videoElement.videoWidth;
-          canvasLeft.height = canvasRight.height = videoElement.videoHeight;
-      }
-      [ctxL, ctxR].forEach(ctx => {
+const hands = new Hands({locateFile: (file) => {
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+}});
+
+hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+
+hands.onResults(onResults);
+
+function onResults(results) {
+    [canvasLeft, canvasRight].forEach(canvas => {
+        if (canvas.width !== videoElement.videoWidth) {
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
+        }
+    });
+
+    [ctxL, ctxR].forEach(ctx => {
         ctx.save();
         ctx.clearRect(0, 0, canvasLeft.width, canvasLeft.height);
         ctx.drawImage(results.image, 0, 0, canvasLeft.width, canvasLeft.height);
-
-        // Draw the hand landmarks (the skeletal lines)
         if (results.multiHandLandmarks) {
-          for (const landmarks of results.multiHandLandmarks) {
-            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
-            drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 2});
-          }
+            for (const landmarks of results.multiHandLandmarks) {
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+                drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 2});
+            }
         }
         ctx.restore();
-      });
+    });
+}
+
+// THE NEW STARTING LOGIC
+async function startApp() {
+    try {
+    
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" }
+        });
+        videoElement.srcObject = stream;
+        await videoElement.play();
+
+       
+        async function sendFrames() {
+            await hands.send({image: videoElement});
+            requestAnimationFrame(sendFrames);
+        }
+        sendFrames();
+        
+     
+        if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen();
+        }
+    } catch (err) {
+        alert("Error: " + err);
     }
+}
 
-    const hands = new Hands({locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-    }});
-
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-
-    hands.onResults(onResults);
-
-   // Alternative "Aggressive" version:
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({image: videoElement});
-    },
-    video: {
-        facingMode: { exact: "environment" }
-    },
-    width: 1280,
-    height: 720
-});
-    },
-    facingMode: 'environment', 
-    width: 1280,
-    height: 720
-});
-      },
-      width: 1280,
-      height: 720
-    });
-    camera.start();
+document.body.addEventListener('click', startApp, {once: true});
   </script>
 </body>
 </html>
