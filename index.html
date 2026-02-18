@@ -39,40 +39,41 @@
         let scene, camera, rendererL, rendererR;
         const claws = [];
 
-        function init3D() {
-            scene = new THREE.Scene();
-            // Adjusted FOV for VR phone perspective
-            camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.1, 1000);
-            camera.position.z = 2;
+        // 1. Updated 3D Setup with Bones
+function init3D() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.1, 1000);
+    camera.position.z = 2;
 
-            // Claw Geometry: Long, sharp cones
-            const geometry = new THREE.ConeGeometry(0.04, 0.4, 8);
-            const material = new THREE.MeshBasicMaterial({color: 0x00ff00}); // Neon Green Claws
-            
-            for(let i=0; i<10; i++) {
-                const claw = new THREE.Mesh(geometry, material);
-                claw.rotation.x = Math.PI; // Point them outward
-                scene.add(claw);
-                claws.push(claw);
-            }
+    // We'll create a "pool" of 3D parts
+    const boneMat = new THREE.MeshBasicMaterial({color: 0x00ff00}); // Neon Green Bones
+    const boneGeo = new THREE.CylinderGeometry(0.015, 0.015, 1, 8);
+    const tipGeo = new THREE.ConeGeometry(0.02, 0.4, 12);
 
-            rendererL = new THREE.WebGLRenderer({alpha: true, antialias: true});
-            rendererR = new THREE.WebGLRenderer({alpha: true, antialias: true});
-            rendererL.setSize(window.innerWidth/2, window.innerHeight);
-            rendererR.setSize(window.innerWidth/2, window.innerHeight);
-            
-            rendererL.domElement.className = "fg-canvas";
-            rendererR.domElement.className = "fg-canvas";
-            
-            document.getElementById('view_l').appendChild(rendererL.domElement);
-            document.getElementById('view_r').appendChild(rendererR.domElement);
-        }
+    // Create 40 parts per hand to cover all joints (2 hands * 20 parts)
+    claws = []; 
+    for(let i=0; i<40; i++) {
+        const part = new THREE.Mesh(i % 5 === 0 && i !== 0 ? tipGeo : boneGeo, boneMat);
+        part.visible = false;
+        scene.add(part);
+        claws.push(part);
+    }
 
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6 });
+    rendererL = new THREE.WebGLRenderer({alpha: true, antialias: true});
+    rendererR = new THREE.WebGLRenderer({alpha: true, antialias: true});
+    rendererL.setSize(window.innerWidth/2, window.innerHeight);
+    rendererR.setSize(window.innerWidth/2, window.innerHeight);
+    
+    rendererL.domElement.className = "fg-canvas";
+    rendererR.domElement.className = "fg-canvas";
+    
+    document.getElementById('view_l').appendChild(rendererL.domElement);
+    document.getElementById('view_r').appendChild(rendererR.domElement);
+}
 
-        hands.onResults((results) => {
-    // 1. Draw Background
+// 2. The Logic to "Skin" the Hand
+hands.onResults((results) => {
+    // Draw Camera background
     bgCanvases.forEach((canvas, i) => {
         if (canvas.width !== video.videoWidth) {
             canvas.width = video.videoWidth; canvas.height = video.videoHeight;
@@ -80,41 +81,37 @@
         bgCtxs[i].drawImage(results.image, 0, 0, canvas.width, canvas.height);
     });
 
-    // 2. Position and Rotate Claws
     claws.forEach(c => c.visible = false);
-    
+
     if (results.multiHandLandmarks) {
         results.multiHandLandmarks.forEach((hand, handIdx) => {
-            // Finger pairs: [knuckle, tip]
-            const fingerPairs = [
-                [3, 4],   // Thumb
-                [7, 8],   // Index
-                [11, 12], // Middle
-                [15, 16], // Ring
-                [19, 20]  // Pinky
+            // Define the connections for a full hand overlay
+            const connections = [
+                [0,1], [1,2], [2,3], [3,4],       // Thumb
+                [0,5], [5,6], [6,7], [7,8],       // Index
+                [0,9], [9,10], [10,11], [11,12],  // Middle
+                [0,13], [13,14], [14,15], [15,16],// Ring
+                [0,17], [17,18], [18,19], [19,20] // Pinky
             ];
 
-            fingerPairs.forEach((pair, i) => {
-                const clawIdx = (handIdx * 5) + i;
-                const knuckle = hand[pair[0]];
-                const tip = hand[pair[1]];
-                const claw = claws[clawIdx];
+            connections.forEach((join, i) => {
+                const partIdx = (handIdx * 20) + i;
+                const p1 = hand[join[0]];
+                const p2 = hand[join[1]];
+                const mesh = claws[partIdx];
 
-                // Position the claw at the fingertip
-                // We use a slightly different multiplier to match the 720p perspective
-                claw.position.x = (tip.x - 0.5) * 4;
-                claw.position.y = -(tip.y - 0.5) * 3;
-                claw.position.z = -tip.z * 5;
+                // Convert to 3D Space
+                const start = new THREE.Vector3((p1.x - 0.5) * 4, -(p1.y - 0.5) * 3, -p1.z * 5);
+                const end = new THREE.Vector3((p2.x - 0.5) * 4, -(p2.y - 0.5) * 3, -p2.z * 5);
 
-                // ROTATION LOGIC: Point the cone away from the knuckle
-                const dx = tip.x - knuckle.x;
-                const dy = tip.y - knuckle.y;
+                // Position the "bone" in the middle of the two points
+                mesh.position.copy(start.clone().lerp(end, 0.5));
                 
-                // Calculate the angle of the finger
-                const angle = Math.atan2(dy, dx);
-                claw.rotation.z = -angle - Math.PI/2; 
+                // Stretch and rotate the bone to connect the joints
+                mesh.scale.set(1, start.distanceTo(end), 1);
+                mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
                 
-                claw.visible = true;
+                mesh.visible = true;
             });
         });
     }
