@@ -76,42 +76,48 @@
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
         hands.setOptions({ maxNumHands: 2, modelComplexity: 0 });
 
-        hands.onResults((results) => {
-            // Draw Video
-            bgCanvases.forEach((canvas, i) => {
-                if (canvas.width !== video.videoWidth) {
-                    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-                }
-                bgCtxs[i].drawImage(results.image, 0, 0, canvas.width, canvas.height);
+     hands.onResults((results) => {
+    // 1. Draw Background
+    bgCanvases.forEach((canvas, i) => {
+        if (canvas.width !== video.videoWidth) {
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        }
+        bgCtxs[i].drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    });
+
+    // 2. Reset visibility every frame
+    if (customModel) {
+        // Find the specific hand sub-objects inside your GLB
+        const meshL = customModel.getObjectByName('hand.L');
+        const meshR = customModel.getObjectByName('hand.R');
+        const armature = customModel.getObjectByName('Armature');
+
+        // Hide everything by default
+        if(meshL) meshL.visible = false;
+        if(meshR) meshR.visible = false;
+        customModel.visible = false;
+
+        if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                customModel.visible = true;
+                const isRightHand = results.multiHandedness[index].label === 'Right';
+                
+                // Only show the side that matches the detected hand
+                if (isRightHand && meshR) meshR.visible = true;
+                if (!isRightHand && meshL) meshL.visible = true;
+
+                // Move the whole armature to the detected wrist position
+                const wrist = landmarks[0];
+                customModel.position.x = (wrist.x - 0.5) * 3.5;
+                customModel.position.y = -(wrist.y - 0.5) * 2.5;
+                customModel.position.z = -wrist.z * 4;
             });
+        }
+    }
 
-            // Update 3D
-            fallbackMeshes.forEach(m => m.visible = false);
-            if (customModel) customModel.visible = false;
-
-            if (results.multiHandLandmarks) {
-                results.multiHandLandmarks.forEach((landmarks, hIdx) => {
-                    const wrist = landmarks[0];
-                    const posX = (wrist.x - 0.5) * 2;
-                    const posY = -(wrist.y - 0.5) * 1.5;
-
-                    if (customModel) {
-                        customModel.visible = true;
-                        customModel.position.set(posX, posY, -wrist.z);
-                    } else {
-                        // Show fallback skeleton if model is missing
-                        for(let i=0; i<21; i++) {
-                            const m = fallbackMeshes[hIdx * 21 + i];
-                            m.visible = true;
-                            m.position.set(posX, posY, -wrist.z);
-                        }
-                    }
-                });
-            }
-            rendererL.render(scene, camera);
-            rendererR.render(scene, camera);
-        });
-
+    rendererL.render(scene, camera);
+    rendererR.render(scene, camera);
+});
         async function start() {
             document.getElementById('btn').style.display = 'none';
             const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment"}});
