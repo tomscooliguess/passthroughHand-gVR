@@ -6,89 +6,76 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; background: #000; color: white; display: flex; overflow: hidden; font-family: sans-serif; }
-        .view { width: 50vw; height: 100vh; position: relative; }
-        canvas { width: 100%; height: 100%; object-fit: contain; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        .view-container { display: flex; width: 100vw; height: 100vh; }
+        .view { width: 50%; height: 100%; position: relative; border-right: 1px solid #222; }
+        canvas { width: 100%; height: 100%; object-fit: cover; }
         video { display: none; }
-        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px; font-size: 20px; background: white; color: black; border: none; border-radius: 10px; }
+        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; 
+               padding: 25px; font-size: 1.5rem; background: #2ecc71; color: white; border: none; border-radius: 50px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
-    <button id="btn">TAP TO START VR</button>
-    <video id="input_video" playsinline></video>
-    <div class="view"><canvas id="canvas_left"></canvas></div>
-    <div class="view"><canvas id="canvas_right"></canvas></div>
+    <button id="btn">START VR VIEW</button>
+    <video id="input_video" playsinline webkit-playsinline></video>
+    <div class="view-container">
+        <div class="view"><canvas id="canvas_left"></canvas></div>
+        <div class="view"><canvas id="canvas_right"></canvas></div>
+    </div>
 
     <script>
-        const videoElement = document.getElementById('input_video');
+        const video = document.getElementById('input_video');
         const btn = document.getElementById('btn');
         const canvases = [document.getElementById('canvas_left'), document.getElementById('canvas_right')];
         const ctxs = canvases.map(c => c.getContext('2d'));
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-     
-hands.setOptions({ 
-    maxNumHands: 2,
-    modelComplexity: 0, 
-    minDetectionConfidence: 0.5, 
-    minTrackingConfidence: 0.5 
-});
         
+        // SPEED OPTIMIZATION: Model 0 is the "Lite" version for mobile
+        hands.setOptions({ 
+            maxNumHands: 1, 
+            modelComplexity: 0, 
+            minDetectionConfidence: 0.5, 
+            minTrackingConfidence: 0.5 
+        });
+
         hands.onResults((results) => {
             canvases.forEach((canvas, i) => {
-                canvas.width = videoElement.videoWidth;
-                canvas.height = videoElement.videoHeight;
+                if (canvas.width !== video.videoWidth) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                }
                 const ctx = ctxs[i];
                 ctx.save();
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
                 if (results.multiHandLandmarks) {
                     for (const landmarks of results.multiHandLandmarks) {
-                        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
-                        drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 2});
+                        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+                        drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 1});
                     }
                 }
                 ctx.restore();
             });
         });
 
-btn.addEventListener('click', async () => {
-    btn.style.display = 'none'; 
-    try {
-        // Try the "Strict" way first
-        const constraints = {
-            video: {
-                facingMode: { exact: "environment" }
-            }
-        };
-        
-        let stream;
-        try {
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (e) {
-            
-            console.log("Exact failed, trying ideal...");
-            stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment" }
-            });
-        }
+        async function start() {
+            btn.style.display = 'none';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: "environment",
+                        width: { ideal: 640 }, // Lower res = much faster AI
+                        height: { ideal: 480 }
+                    }
+                });
+                video.srcObject = stream;
+                await video.play();
 
-        videoElement.srcObject = stream;
-        await videoElement.play();
+                const sensor = async () => {
+                    await hands.send({image: video});
+                    requestAnimationFrame(sensor);
+                };
+                sensor();
 
-let skipFrame = false;
-const process = async () => {
-    if (!skipFrame) {
-        await hands.send({image: videoElement});
-    }
-    skipFrame = !skipFrame; 
-    requestAnimationFrame(process);
-};
-        
-        if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
-    } catch (err) {
-        alert("CAMERA ERROR: " + err.name + " - " + err.message);
-    }
-});    </script>
-</body>
-</html>
+                if (
