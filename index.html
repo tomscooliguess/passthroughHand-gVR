@@ -41,4 +41,46 @@
             hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
             
-            hands.on
+            hands.onResults((results) => {
+                canvases.forEach((canvas, i) => {
+                    if (canvas.width !== video.videoWidth) {
+                        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+                    }
+                    const ctx = ctxs[i];
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+                    if (results.multiHandLandmarks) {
+                        for (const landmarks of results.multiHandLandmarks) {
+                            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                        }
+                    }
+                });
+            });
+            log("MediaPipe Ready");
+        } catch(e) { log("MediaPipe Init Fail: " + e); }
+
+        btn.onclick = async () => {
+            log("Button clicked...");
+            btn.style.display = 'none';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: 640, height: 480 }
+                });
+                video.srcObject = stream;
+                await video.play();
+                log("Video playing...");
+
+                const cameraLoop = async () => {
+                    await hands.send({image: video});
+                    requestAnimationFrame(cameraLoop);
+                };
+                cameraLoop();
+                if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+            } catch (err) {
+                log("Camera Fail: " + err);
+                btn.style.display = 'block';
+            }
+        };
+    </script>
+</body>
+</html>
