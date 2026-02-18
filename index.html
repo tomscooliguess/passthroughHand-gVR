@@ -3,22 +3,26 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Precision VR Hand Overlay</title>
+    <title>Neon Pulse VR Hands</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .view-container { display: flex; width: 100vw; height: 100vh; }
         .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #222; }
         .bg-canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; z-index: 1; }
         .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 2; pointer-events: none; }
         video { display: none; }
-        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; padding: 25px 50px; background: #2ecc71; color: white; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; }
+        #btn { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            z-index: 1000; padding: 20px 40px; background: #00ffcc; color: #000; 
+            border: none; border-radius: 50px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 0 20px #00ffcc;
+        }
     </style>
 </head>
 <body>
-    <button id="btn">START VR</button>
+    <button id="btn">START NEON VR</button>
     <video id="input_video" playsinline webkit-playsinline muted></video>
     <div class="view-container">
         <div class="view"><canvas class="bg-canvas" id="bg_l"></canvas></div>
@@ -31,41 +35,28 @@
         const bgCtxs = bgCanvases.map(c => c.getContext('2d'));
         
         let scene, camera, rendererL, rendererR;
-        let leftHand, rightHand;
+        let bones = [];
 
         function init3D() {
             scene = new THREE.Scene();
-            // Camera at Z=2 to give a wide viewing frustum
             camera = new THREE.PerspectiveCamera(70, (window.innerWidth / 2) / window.innerHeight, 0.01, 100);
-            camera.position.set(0, 0, 2); 
+            camera.position.set(0, 0, 2);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 1.2));
-
-            const loader = new THREE.GLTFLoader();
-            loader.load('hand_for_vr.glb', (gltf) => {
-                const baseModel = gltf.scene;
-                
-                // CRITICAL: Re-center the model so its "Wrist" is the pivot point
-                const box = new THREE.Box3().setFromObject(baseModel);
-                const size = box.getSize(new THREE.Vector3());
-                const center = box.getCenter(new THREE.Vector3());
-                
-                // This shifts the mesh so the wrist (bottom of the model) is at 0,0,0
-                baseModel.position.set(-center.x, -center.y + (size.y / 2), -center.z);
-                
-                // Wrap in a group for easier tracking
-                leftHand = new THREE.Group();
-                leftHand.add(baseModel);
-                leftHand.scale.set(0.08, 0.08, 0.08); // Smaller base scale
-                scene.add(leftHand);
-
-                rightHand = leftHand.clone();
-                rightHand.scale.x *= -1; // Flip for right hand
-                scene.add(rightHand);
-                
-                leftHand.visible = rightHand.visible = false;
-                document.getElementById('btn').style.display = 'block';
-            });
+            // Create a pool of 42 "Neon Tubes" (21 per hand)
+            // Each tube is a Cylinder that we will stretch between joints
+            const tubeGeo = new THREE.CylinderGeometry(0.008, 0.008, 1, 6);
+            
+            for (let i = 0; i < 42; i++) {
+                const material = new THREE.MeshBasicMaterial({
+                    color: i < 21 ? 0x00ffcc : 0xff00ff, // Cyan for Left, Magenta for Right
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const mesh = new THREE.Mesh(tubeGeo, material);
+                mesh.visible = false;
+                scene.add(mesh);
+                bones.push(mesh);
+            }
 
             rendererL = new THREE.WebGLRenderer({ alpha: true, antialias: true });
             rendererR = new THREE.WebGLRenderer({ alpha: true, antialias: true });
@@ -76,7 +67,17 @@
         }
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7 });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
+
+        // Connection map for bones (Wrist to fingers)
+        const connections = [
+            [0,1],[1,2],[2,3],[3,4], // Thumb
+            [0,5],[5,6],[6,7],[7,8], // Index
+            [0,9],[9,10],[10,11],[11,12], // Middle
+            [0,13],[13,14],[14,15],[15,16], // Ring
+            [0,17],[17,18],[18,19],[19,20], // Pinky
+            [5,9],[9,13],[13,17] // Palm
+        ];
 
         hands.onResults((results) => {
             bgCtxs.forEach((ctx, i) => {
@@ -86,37 +87,32 @@
                 ctx.drawImage(results.image, 0, 0, bgCanvases[i].width, bgCanvases[i].height);
             });
 
-            if (leftHand) leftHand.visible = false;
-            if (rightHand) rightHand.visible = false;
+            bones.forEach(b => b.visible = false);
 
             if (results.multiHandLandmarks) {
-                results.multiHandLandmarks.forEach((landmarks, index) => {
-                    const label = results.multiHandedness[index].label;
-                    const model = (label === 'Left') ? leftHand : rightHand;
-                    
-                    if (model) {
-                        model.visible = true;
-                        const wrist = landmarks[0];
-                        const middleKnuckle = landmarks[9];
+                results.multiHandLandmarks.forEach((landmarks, hIdx) => {
+                    const isRight = results.multiHandedness[hIdx].label === 'Right';
+                    const boneOffset = isRight ? 21 : 0;
 
-                        // COORDINATE MAPPING
-                        // Adjusting these multipliers to match the 2-unit camera distance
-                        const posX = (wrist.x - 0.5) * 3.5;
-                        const posY = -(wrist.y - 0.5) * 2.5;
-                        const posZ = -wrist.z * 5; // Depth tracking
+                    connections.forEach((conn, cIdx) => {
+                        const bone = bones[boneOffset + cIdx];
+                        if (!bone) return;
 
-                        // Smooth movement (Lerp)
-                        model.position.x += (posX - model.position.x) * 0.4;
-                        model.position.y += (posY - model.position.y) * 0.4;
-                        model.position.z = posZ;
+                        const p1 = landmarks[conn[0]];
+                        const p2 = landmarks[conn[1]];
 
-                        // TRACKING ROTATION
-                        // Calculate tilt based on wrist-to-knuckle vector
-                        const dx = middleKnuckle.x - wrist.x;
-                        const dy = middleKnuckle.y - wrist.y;
-                        const rotationZ = Math.atan2(dy, dx) + (label === 'Left' ? -Math.PI/2 : Math.PI/2);
-                        model.rotation.z = rotationZ;
-                    }
+                        // Convert landmarks to 3D Space
+                        const start = new THREE.Vector3((p1.x - 0.5) * 3.5, -(p1.y - 0.5) * 2.5, -p1.z * 4);
+                        const end = new THREE.Vector3((p2.x - 0.5) * 3.5, -(p2.y - 0.5) * 2.5, -p2.z * 4);
+
+                        // Position & Stretch bone between joints
+                        const distance = start.distanceTo(end);
+                        bone.position.copy(start.clone().lerp(end, 0.5));
+                        bone.scale.set(1, distance, 1);
+                        bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
+                        
+                        bone.visible = true;
+                    });
                 });
             }
             rendererL.render(scene, camera);
