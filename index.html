@@ -10,13 +10,14 @@
         .view-container { display: flex; width: 100vw; height: 100vh; }
         .view { width: 50%; height: 100%; position: relative; overflow: hidden; }
         .bg-canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; }
+        /* The lines canvas MUST match the video's aspect ratio exactly */
         .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 10; pointer-events: none; }
         video { display: none; }
-        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px 40px; background: #00ffcc; border: none; border-radius: 50px; font-weight: bold; }
+        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px 40px; background: #00ffcc; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
-    <button id="btn">START VR</button>
+    <button id="btn">START CALIBRATED HANDS</button>
     <video id="input_video" playsinline muted></video>
     <div class="view-container">
         <div class="view"><canvas class="bg-canvas" id="bg_l"></canvas></div>
@@ -34,13 +35,14 @@
         function init3D() {
             scene = new THREE.Scene();
             
-            // ADJUSTED FOV: Lowering FOV reduces the "stretching" effect at screen edges
-            camera = new THREE.PerspectiveCamera(60, (window.innerWidth / 2) / window.innerHeight, 0.1, 100);
-            camera.position.set(0, 0, 2);
+            // We use an Orthographic Camera for a flat 2D-to-3D overlay.
+            // This removes the "depth perspective" that causes the offset.
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+            camera.position.z = 1;
 
-            const tubeGeo = new THREE.CylinderGeometry(0.012, 0.012, 1, 8);
-            for (let i = 0; i < 42; i++) {
-                const mat = new THREE.MeshBasicMaterial({ color: i < 21 ? 0x00ffff : 0xff00ff });
+            const tubeGeo = new THREE.CylinderGeometry(0.01, 0.01, 1, 6);
+            for (let i = 0; i < 44; i++) {
+                const mat = new THREE.MeshBasicMaterial({ color: i < 22 ? 0x00ffff : 0xff00ff });
                 const mesh = new THREE.Mesh(tubeGeo, mat);
                 mesh.visible = false;
                 scene.add(mesh);
@@ -55,15 +57,15 @@
             });
         }
 
-        // Logic to connect joints
         const pairs = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.8 });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7 });
 
         hands.onResults((results) => {
             bgCtxs.forEach((ctx, i) => {
-                bgCanvases[i].width = video.videoWidth; bgCanvases[i].height = video.videoHeight;
+                bgCanvases[i].width = video.videoWidth; 
+                bgCanvases[i].height = video.videoHeight;
                 ctx.drawImage(results.image, 0, 0);
             });
 
@@ -71,18 +73,22 @@
 
             if (results.multiHandLandmarks) {
                 results.multiHandLandmarks.forEach((landmarks, hIdx) => {
-                    const offset = hIdx * 21;
+                    const offset = hIdx * 22;
                     pairs.forEach((pair, pIdx) => {
                         const bone = bones[offset + pIdx];
                         if (!bone) return;
 
-                        // FIX: Precise Coordinate Mapping
-                        // We use a tighter multiplier (3.0 instead of 4.0) to match the background video scale
-                        const get3D = (p) => new THREE.Vector3((p.x - 0.5) * 3.1, -(p.y - 0.5) * 2.3, -p.z * 3);
+                        // MAP TO SCREEN SPACE (-1 to 1)
+                        const getCoord = (p) => new THREE.Vector3(
+                            (p.x * 2 - 1), 
+                            -(p.y * 2 - 1), 
+                            -p.z // Use raw Z for depth scaling
+                        );
                         
-                        const start = get3D(landmarks[pair[0]]);
-                        const end = get3D(landmarks[pair[1]]);
+                        const start = getCoord(landmarks[pair[0]]);
+                        const end = getCoord(landmarks[pair[1]]);
 
+                        // Align the cylinder between the two points
                         bone.position.copy(start.clone().lerp(end, 0.5));
                         bone.scale.set(1, start.distanceTo(end), 1);
                         bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
@@ -96,7 +102,9 @@
 
         async function start() {
             document.getElementById('btn').style.display = 'none';
-            const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment", width: 1280, height: 720}});
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+            });
             video.srcObject = stream;
             await video.play();
             const loop = async () => { await hands.send({image: video}); requestAnimationFrame(loop); };
