@@ -52,7 +52,7 @@
             const loader = new THREE.GLTFLoader();
             loader.load('hand_for_vr.glb', (gltf) => {
                 leftHand = gltf.scene;
-                leftHand.scale.set(2, 2, 2); // Adjusted for hand_for_vr scale
+                leftHand.scale.set(0.5, 0.5, 0.5); // Adjusted for hand_for_vr scale
                 scene.add(leftHand);
 
                 rightHand = leftHand.clone();
