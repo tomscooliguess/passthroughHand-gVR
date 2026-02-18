@@ -41,21 +41,32 @@
             hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
             
-            hands.onResults((results) => {
-                canvases.forEach((canvas, i) => {
-                    if (canvas.width !== video.videoWidth) {
-                        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-                    }
-                    const ctx = ctxs[i];
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-                    if (results.multiHandLandmarks) {
-                        for (const landmarks of results.multiHandLandmarks) {
-                            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-                        }
-                    }
+           hands.onResults((results) => {
+    canvases.forEach((canvas, i) => {
+        const ctx = ctxs[i];
+        
+        // 1. Draw the background video frame first
+        ctx.save();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+        // 2. Check if ANY hands were found
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            // 3. LOOP through every hand found (will do 2 if maxNumHands is 2)
+            for (const landmarks of results.multiHandLandmarks) {
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+                    color: '#00FF00', 
+                    lineWidth: 3
                 });
-            });
+                drawLandmarks(ctx, landmarks, {
+                    color: '#FF0000', 
+                    lineWidth: 1
+                });
+            }
+        }
+        ctx.restore();
+    });
+});
             log("MediaPipe Ready");
         } catch(e) { log("MediaPipe Init Fail: " + e); }
 
