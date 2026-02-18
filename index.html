@@ -4,106 +4,90 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; }
         .view-container { display: flex; width: 100vw; height: 100vh; }
-        .view { width: 50%; height: 100%; position: relative; overflow: hidden; }
-        .bg-canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; }
-        /* The lines canvas MUST match the video's aspect ratio exactly */
-        .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 10; pointer-events: none; }
+        .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #333; }
+        canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; }
         video { display: none; }
         #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px 40px; background: #00ffcc; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
-    <button id="btn">START CALIBRATED HANDS</button>
+    <button id="btn">START PERFECT OVERLAY</button>
     <video id="input_video" playsinline muted></video>
     <div class="view-container">
-        <div class="view"><canvas class="bg-canvas" id="bg_l"></canvas></div>
-        <div class="view"><canvas class="bg-canvas" id="bg_r"></canvas></div>
+        <div class="view"><canvas id="can_l"></canvas></div>
+        <div class="view"><canvas id="can_r"></canvas></div>
     </div>
 
     <script>
         const video = document.getElementById('input_video');
-        const bgCanvases = [document.getElementById('bg_l'), document.getElementById('bg_r')];
-        const bgCtxs = bgCanvases.map(c => c.getContext('2d'));
-        
-        let scene, camera, rendererL, rendererR;
-        let bones = [];
+        const canvases = [document.getElementById('can_l'), document.getElementById('can_r')];
+        const ctxs = canvases.map(c => c.getContext('2d'));
 
-        function init3D() {
-            scene = new THREE.Scene();
-            
-            // We use an Orthographic Camera for a flat 2D-to-3D overlay.
-            // This removes the "depth perspective" that causes the offset.
-            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-            camera.position.z = 1;
-
-            const tubeGeo = new THREE.CylinderGeometry(0.01, 0.01, 1, 6);
-            for (let i = 0; i < 44; i++) {
-                const mat = new THREE.MeshBasicMaterial({ color: i < 22 ? 0x00ffff : 0xff00ff });
-                const mesh = new THREE.Mesh(tubeGeo, mat);
-                mesh.visible = false;
-                scene.add(mesh);
-                bones.push(mesh);
-            }
-
-            rendererL = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-            rendererR = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-            [rendererL, rendererR].forEach((r, i) => {
-                r.setSize(window.innerWidth / 2, window.innerHeight);
-                document.querySelectorAll('.view')[i].appendChild(r.domElement).className = "fg-canvas";
-            });
-        }
-
-        const pairs = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+        const pairs = [
+            [0,1],[1,2],[2,3],[3,4], // Thumb
+            [0,5],[5,6],[6,7],[7,8], // Index
+            [0,9],[9,10],[10,11],[11,12], // Middle
+            [0,13],[13,14],[14,15],[15,16], // Ring
+            [0,17],[17,18],[18,19],[19,20], // Pinky
+            [5,9],[9,13],[13,17],[0,17] // Palm
+        ];
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
         hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7 });
 
         hands.onResults((results) => {
-            bgCtxs.forEach((ctx, i) => {
-                bgCanvases[i].width = video.videoWidth; 
-                bgCanvases[i].height = video.videoHeight;
-                ctx.drawImage(results.image, 0, 0);
-            });
+            ctxs.forEach((ctx, i) => {
+                const can = canvases[i];
+                if (can.width !== video.videoWidth) {
+                    can.width = video.videoWidth; 
+                    can.height = video.videoHeight;
+                }
 
-            bones.forEach(b => b.visible = false);
+                // 1. Draw the camera feed
+                ctx.save();
+                ctx.clearRect(0, 0, can.width, can.height);
+                ctx.drawImage(results.image, 0, 0, can.width, can.height);
 
-            if (results.multiHandLandmarks) {
-                results.multiHandLandmarks.forEach((landmarks, hIdx) => {
-                    const offset = hIdx * 22;
-                    pairs.forEach((pair, pIdx) => {
-                        const bone = bones[offset + pIdx];
-                        if (!bone) return;
+                // 2. Draw the skeletal lines
+                if (results.multiHandLandmarks) {
+                    results.multiHandLandmarks.forEach((landmarks, hIdx) => {
+                        const isRight = results.multiHandedness[hIdx].label === 'Right';
+                        ctx.strokeStyle = isRight ? '#ff00ff' : '#00ffff';
+                        ctx.lineWidth = 8;
+                        ctx.lineCap = 'round';
+                        ctx.shadowBlur = 15;
+                        ctx.shadowColor = ctx.strokeStyle;
 
-                        // MAP TO SCREEN SPACE (-1 to 1)
-                        const getCoord = (p) => new THREE.Vector3(
-                            (p.x * 2 - 1), 
-                            -(p.y * 2 - 1), 
-                            -p.z // Use raw Z for depth scaling
-                        );
-                        
-                        const start = getCoord(landmarks[pair[0]]);
-                        const end = getCoord(landmarks[pair[1]]);
+                        pairs.forEach(([s, e]) => {
+                            const start = landmarks[s];
+                            const end = landmarks[e];
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(start.x * can.width, start.y * can.height);
+                            ctx.lineTo(end.x * can.width, end.y * can.height);
+                            ctx.stroke();
+                        });
 
-                        // Align the cylinder between the two points
-                        bone.position.copy(start.clone().lerp(end, 0.5));
-                        bone.scale.set(1, start.distanceTo(end), 1);
-                        bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
-                        bone.visible = true;
+                        // Draw joints
+                        ctx.fillStyle = "#ffffff";
+                        landmarks.forEach(p => {
+                            ctx.beginPath();
+                            ctx.arc(p.x * can.width, p.y * can.height, 4, 0, Math.PI * 2);
+                            ctx.fill();
+                        });
                     });
-                });
-            }
-            rendererL.render(scene, camera);
-            rendererR.render(scene, camera);
+                }
+                ctx.restore();
+            });
         });
 
         async function start() {
             document.getElementById('btn').style.display = 'none';
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+                video: { facingMode: "environment", width: 1280, height: 720 }
             });
             video.srcObject = stream;
             await video.play();
@@ -111,7 +95,6 @@
             loop();
         }
 
-        init3D();
         document.getElementById('btn').onclick = start;
     </script>
 </body>
