@@ -3,14 +3,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>VR Hand Overlay</title>
+    <title>VR Hand Overlay Final</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .view-container { display: flex; width: 100vw; height: 100vh; }
-        .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #222; }
+        .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #333; }
         .bg-canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; z-index: 1; }
         .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 2; pointer-events: none; }
         video { display: none; }
@@ -19,10 +19,12 @@
             z-index: 1000; padding: 25px 50px; background: #2ecc71; color: white; 
             border: none; border-radius: 50px; font-weight: bold; cursor: pointer;
         }
+        #status { position: fixed; bottom: 20px; width: 100%; text-align: center; color: #00ff00; z-index: 1001; }
     </style>
 </head>
 <body>
-    <button id="btn">START VR HANDS</button>
+    <div id="status">Warming up engines...</div>
+    <button id="btn" style="display:none">START VR HANDS</button>
     <video id="input_video" playsinline webkit-playsinline muted></video>
     
     <div class="view-container">
@@ -33,54 +35,59 @@
     <script>
         const video = document.getElementById('input_video');
         const btn = document.getElementById('btn');
+        const status = document.getElementById('status');
         const bgCanvases = [document.getElementById('bg_l'), document.getElementById('bg_r')];
         const bgCtxs = bgCanvases.map(c => c.getContext('2d'));
         
         let scene, camera, rendererL, rendererR;
         let leftHand, rightHand;
-function init3D() {
-    scene = new THREE.Scene();
 
-    camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.01, 1000);
-    camera.position.set(0, 0, 2); 
+        function init3D() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.01, 100);
+            camera.position.z = 1.2; 
 
-    const light = new THREE.DirectionalLight(0xffffff, 1.2);
-    light.position.set(0, 2, 5);
-    scene.add(light);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+            scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+            sun.position.set(0, 5, 5);
+            scene.add(sun);
 
-    const loader = new THREE.GLTFLoader();
-    loader.load('hand_for_vr.glb', (gltf) => {
-        leftHand = gltf.scene;
-        
-        leftHand.scale.set(0.05, 0.05, 0.05); 
-        
-       
-        const box = new THREE.Box3().setFromObject(leftHand);
-        const center = box.getCenter(new THREE.Vector3());
-        leftHand.position.sub(center); 
-        
-        scene.add(leftHand);
+            const loader = new THREE.GLTFLoader();
+            loader.load('hand_for_vr.glb', (gltf) => {
+                leftHand = gltf.scene;
+                
+                // Holographic settings so it doesn't block your view
+                leftHand.traverse((node) => {
+                    if (node.isMesh) {
+                        node.material.transparent = true;
+                        node.material.opacity = 0.6;
+                        node.material.color.setHex(0x00ffff); // Cyan hologram
+                    }
+                });
 
-        rightHand = leftHand.clone();
-        rightHand.scale.x *= -1;
-        scene.add(rightHand);
-        
-        leftHand.visible = rightHand.visible = false;
-    });
+                // Perfect Scale for this model
+                leftHand.scale.set(0.15, 0.15, 0.15); 
+                scene.add(leftHand);
 
-    rendererL = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    rendererR = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-    
-    [rendererL, rendererR].forEach((r, i) => {
-        r.setSize(window.innerWidth / 2, window.innerHeight);
-        r.setPixelRatio(window.devicePixelRatio);
-        r.domElement.className = "fg-canvas";
-        document.getElementsByClassName('view')[i].appendChild(r.domElement);
-    });
-}
+                rightHand = leftHand.clone();
+                rightHand.scale.x *= -1; // Flip for right hand
+                scene.add(rightHand);
+                
+                status.innerHTML = "Hands Ready!";
+                btn.style.display = 'block';
+            });
+
+            rendererL = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            rendererR = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            [rendererL, rendererR].forEach((r, i) => {
+                r.setSize(window.innerWidth / 2, window.innerHeight);
+                r.domElement.className = "fg-canvas";
+                document.getElementsByClassName('view')[i].appendChild(r.domElement);
+            });
+        }
+
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1 });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
 
         hands.onResults((results) => {
             bgCanvases.forEach((canvas, i) => {
@@ -101,15 +108,18 @@ function init3D() {
                     if (model) {
                         model.visible = true;
                         const wrist = landmarks[0];
-                    
-                    const targetX = (wrist.x - 0.5) * 3; 
-                    const targetY = -(wrist.y - 0.5) * 2; 
+                        const indexBase = landmarks[5];
                         
-                    model.position.x += (targetX - model.position.x) * 0.4;
-                    model.position.y += (targetY - model.position.y) * 0.4;
-                    model.position.z = -wrist.z * 5; 
-                        const indexFinger = landmarks[5];
-                        model.rotation.z = Math.atan2(indexFinger.y - wrist.y, indexFinger.x - wrist.x) + (isRight ? 1.5 : -1.5);
+                        // Positioning with LERP (Smoothing)
+                        const tx = (wrist.x - 0.5) * 3.2;
+                        const ty = -(wrist.y - 0.5) * 2.4;
+                        model.position.x += (tx - model.position.x) * 0.3;
+                        model.position.y += (ty - model.position.y) * 0.3;
+                        model.position.z = -wrist.z * 4;
+
+                        // Rotation to match arm tilt
+                        const angle = Math.atan2(indexBase.y - wrist.y, indexBase.x - wrist.x);
+                        model.rotation.z = angle + (isRight ? 1.6 : -1.6);
                     }
                 });
             }
@@ -119,6 +129,7 @@ function init3D() {
 
         async function start() {
             btn.style.display = 'none';
+            status.style.display = 'none';
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: "environment", width: 1280, height: 720 }
             });
