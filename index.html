@@ -1,93 +1,71 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  
-  <style>
-    body { margin: 0; background: black; display: flex; overflow: hidden; }
-    .view { width: 50vw; height: 100vh; position: relative; overflow: hidden; border: 1px solid #333; }
-    canvas { width: 100%; height: 100%; object-fit: cover; }
-    video { display: none; }
-  </style>
+    <meta charset="utf-8">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; background: #000; color: white; display: flex; overflow: hidden; font-family: sans-serif; }
+        .view { width: 50vw; height: 100vh; position: relative; }
+        canvas { width: 100%; height: 100%; object-fit: contain; }
+        video { display: none; }
+        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px; font-size: 20px; background: white; color: black; border: none; border-radius: 10px; }
+    </style>
 </head>
 <body>
-  <video id="input_video"></video>
-  
-  <div class="view"><canvas id="canvas_left"></canvas></div>
-  <div class="view"><canvas id="canvas_right"></canvas></div>
+    <button id="btn">TAP TO START VR</button>
+    <video id="input_video" playsinline></video>
+    <div class="view"><canvas id="canvas_left"></canvas></div>
+    <div class="view"><canvas id="canvas_right"></canvas></div>
 
-  <script>
-   const videoElement = document.getElementById('input_video');
-const canvasLeft = document.getElementById('canvas_left');
-const canvasRight = document.getElementById('canvas_right');
-const ctxL = canvasLeft.getContext('2d');
-const ctxR = canvasRight.getContext('2d');
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const btn = document.getElementById('btn');
+        const canvases = [document.getElementById('canvas_left'), document.getElementById('canvas_right')];
+        const ctxs = canvases.map(c => c.getContext('2d'));
 
-const hands = new Hands({locateFile: (file) => {
-    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-}});
-
-hands.setOptions({
-    maxNumHands: 2,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-});
-
-hands.onResults(onResults);
-
-function onResults(results) {
-    [canvasLeft, canvasRight].forEach(canvas => {
-        if (canvas.width !== videoElement.videoWidth) {
-            canvas.width = videoElement.videoWidth;
-            canvas.height = videoElement.videoHeight;
-        }
-    });
-
-    [ctxL, ctxR].forEach(ctx => {
-        ctx.save();
-        ctx.clearRect(0, 0, canvasLeft.width, canvasLeft.height);
-        ctx.drawImage(results.image, 0, 0, canvasLeft.width, canvasLeft.height);
-        if (results.multiHandLandmarks) {
-            for (const landmarks of results.multiHandLandmarks) {
-                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
-                drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 2});
-            }
-        }
-        ctx.restore();
-    });
-}
-
-// THE NEW STARTING LOGIC
-async function startApp() {
-    try {
-    
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment" }
-        });
-        videoElement.srcObject = stream;
-        await videoElement.play();
-
-       
-        async function sendFrames() {
-            await hands.send({image: videoElement});
-            requestAnimationFrame(sendFrames);
-        }
-        sendFrames();
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         
-     
-        if (document.documentElement.requestFullscreen) {
-            document.documentElement.requestFullscreen();
-        }
-    } catch (err) {
-        alert("Error: " + err);
-    }
-}
+        hands.onResults((results) => {
+            canvases.forEach((canvas, i) => {
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+                const ctx = ctxs[i];
+                ctx.save();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+                if (results.multiHandLandmarks) {
+                    for (const landmarks of results.multiHandLandmarks) {
+                        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+                        drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 2});
+                    }
+                }
+                ctx.restore();
+            });
+        });
 
-document.body.addEventListener('click', startApp, {once: true});
-  </script>
+        btn.addEventListener('click', async () => {
+            btn.style.display = 'none'; 
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                videoElement.srcObject = stream;
+                await videoElement.play();
+                
+                const process = async () => {
+                    await hands.send({image: videoElement});
+                    requestAnimationFrame(process);
+                };
+                process();
+                
+                if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+            } catch (err) {
+                alert("CAMERA ERROR: " + err.name + " - " + err.message);
+            }
+        });
+    </script>
 </body>
 </html>
