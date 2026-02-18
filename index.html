@@ -72,35 +72,55 @@
         hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6 });
 
         hands.onResults((results) => {
-            // 1. Draw Camera background first
-            bgCanvases.forEach((canvas, i) => {
-                if (canvas.width !== video.videoWidth) {
-                    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-                }
-                bgCtxs[i].drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    // 1. Draw Background
+    bgCanvases.forEach((canvas, i) => {
+        if (canvas.width !== video.videoWidth) {
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        }
+        bgCtxs[i].drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    });
+
+    // 2. Position and Rotate Claws
+    claws.forEach(c => c.visible = false);
+    
+    if (results.multiHandLandmarks) {
+        results.multiHandLandmarks.forEach((hand, handIdx) => {
+            // Finger pairs: [knuckle, tip]
+            const fingerPairs = [
+                [3, 4],   // Thumb
+                [7, 8],   // Index
+                [11, 12], // Middle
+                [15, 16], // Ring
+                [19, 20]  // Pinky
+            ];
+
+            fingerPairs.forEach((pair, i) => {
+                const clawIdx = (handIdx * 5) + i;
+                const knuckle = hand[pair[0]];
+                const tip = hand[pair[1]];
+                const claw = claws[clawIdx];
+
+                // Position the claw at the fingertip
+                // We use a slightly different multiplier to match the 720p perspective
+                claw.position.x = (tip.x - 0.5) * 4;
+                claw.position.y = -(tip.y - 0.5) * 3;
+                claw.position.z = -tip.z * 5;
+
+                // ROTATION LOGIC: Point the cone away from the knuckle
+                const dx = tip.x - knuckle.x;
+                const dy = tip.y - knuckle.y;
+                
+                // Calculate the angle of the finger
+                const angle = Math.atan2(dy, dx);
+                claw.rotation.z = -angle - Math.PI/2; 
+                
+                claw.visible = true;
             });
-
-            // 2. Position 3D Claws
-            claws.forEach(c => c.visible = false);
-            if (results.multiHandLandmarks) {
-                results.multiHandLandmarks.forEach((hand, handIdx) => {
-                    const tips = [4, 8, 12, 16, 20]; // Thumb to Pinky tips
-                    tips.forEach((tipIdx, i) => {
-                        const clawIdx = (handIdx * 5) + i;
-                        const lm = hand[tipIdx];
-                        
-                        // Mapping MediaPipe coordinates to Three.js Space
-                        claws[clawIdx].position.x = (lm.x - 0.5) * 3.5;
-                        claws[clawIdx].position.y = -(lm.y - 0.5) * 2.5;
-                        claws[clawIdx].position.z = -lm.z * 2;
-                        claws[clawIdx].visible = true;
-                    });
-                });
-            }
-            rendererL.render(scene, camera);
-            rendererR.render(scene, camera);
         });
-
+    }
+    rendererL.render(scene, camera);
+    rendererR.render(scene, camera);
+});
         async function start() {
             btn.style.display = 'none';
             init3D();
