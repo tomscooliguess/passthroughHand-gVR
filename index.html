@@ -62,8 +62,14 @@
     hands.onResults(onResults);
 
     const camera = new Camera(videoElement, {
-      onFrame: async () => {
+        onFrame: async () => {
         await hands.send({image: videoElement});
+    },
+    // This tells the phone to use the back camera
+    facingMode: 'environment', 
+    width: 1280,
+    height: 720
+});
       },
       width: 1280,
       height: 720
