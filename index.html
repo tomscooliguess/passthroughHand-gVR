@@ -12,17 +12,13 @@
         .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #222; }
         .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 10; }
         video { display: none; }
-        #status { position: fixed; top: 10px; width: 100%; text-align: center; color: #0f0; z-index: 2000; pointer-events: none; }
-        #overlay { 
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            z-index: 1000; display: flex; align-items: center; justify-content: center;
-            background: #000; color: #00ffcc; cursor: pointer;
-        }
+        #status { position: fixed; top: 10px; width: 100%; text-align: center; color: #0f0; z-index: 2000; background: rgba(0,0,0,0.5); }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; display: flex; align-items: center; justify-content: center; background: #000; color: #00ffcc; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div id="status">INITIATING...</div>
-    <div id="overlay"><h1>[ TAP TO ENTER ]</h1></div>
+    <div id="status">WAITING...</div>
+    <div id="overlay"><h1>[ CLICK TO RE-CENTER & START ]</h1></div>
     <video id="input_video" playsinline muted></video>
     <div class="view-container">
         <div class="view" id="view_l"></div>
@@ -33,38 +29,39 @@
         const video = document.getElementById('input_video');
         const status = document.getElementById('status');
         let scene, camera, rendererL, rendererR;
-        let leftHand, rightHand, world;
+        let leftHand, rightHand, debugCube;
 
         function init3D() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.01, 1000);
-            camera.position.set(0, 0, 0.5); // Camera starts slightly back
+            camera.position.set(0, 0, 0); // Camera at origin
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-            const light = new THREE.PointLight(0xffffff, 1);
+            scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+            const light = new THREE.PointLight(0xffffff, 2);
             light.position.set(0, 2, 1);
             scene.add(light);
 
+            // Debug Cube - If you see this, tracking is working
+            debugCube = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({color: 0xff0000}));
+            scene.add(debugCube);
+
             const loader = new THREE.GLTFLoader();
 
-            // Load World: Pushed further down and away so it doesn't hide hands
+            // Load World - Scale it down and move it so it's a floor
             loader.load('liminal.glb', (gltf) => {
-                world = gltf.scene;
-                world.position.set(0, -2, -5); 
-                world.scale.set(0.5, 0.5, 0.5);
+                const world = gltf.scene;
+                world.position.set(0, -1.6, -3); 
+                world.scale.set(0.01, 0.01, 0.01); // Shrink it in case it's huge
                 scene.add(world);
-                status.innerText = "ROOM LOADED. WAITING FOR HANDS...";
+                status.innerText = "WORLD READY";
             });
 
-            // Load Hands
+            // Load Hands with specific visibility settings
             loader.load('hand_for_vr.glb', (gltf) => {
                 leftHand = gltf.scene;
-                leftHand.scale.set(0.2, 0.2, 0.2); // Scaled up slightly to be visible
-                
-                // Add a glow so we can see them in the dark room
-                leftHand.traverse(n => { if(n.isMesh) n.material.emissive = new THREE.Color(0x00ffff); });
-                
+                leftHand.scale.set(0.5, 0.5, 0.5); // Large enough to see
                 scene.add(leftHand);
+
                 rightHand = leftHand.clone();
                 rightHand.scale.x *= -1;
                 scene.add(rightHand);
@@ -86,26 +83,36 @@
         hands.onResults((results) => {
             if (leftHand) leftHand.visible = false;
             if (rightHand) rightHand.visible = false;
+            debugCube.visible = false;
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                status.innerText = "HANDS DETECTED";
                 results.multiHandLandmarks.forEach((landmarks, index) => {
                     const isRight = results.multiHandedness[index].label === 'Right';
                     const model = isRight ? rightHand : leftHand;
                     
                     if (model) {
-                        model.visible = true;
                         const wrist = landmarks[0];
-                        // Map coordinates to be directly in front of the camera (0.5 to 1.5 units away)
-                        model.position.set(
-                            (wrist.x - 0.5) * 2, 
-                            -(wrist.y - 0.5) * 1.5, 
-                            -wrist.z * 2 - 0.8 
-                        );
+                        
+                        // NEW TRACKING MATH
+                        // Places hands exactly 0.5 to 1.0 units in front of the camera
+                        const x = (wrist.x - 0.5) * 2;
+                        const y = -(wrist.y - 0.5) * 1.5;
+                        const z = -0.5 - (wrist.z * 2);
+
+                        model.position.set(x, y, z);
+                        model.visible = true;
+
+                        // Move debug cube to the first detected hand
+                        if(index === 0) {
+                            debugCube.position.set(x, y + 0.2, z);
+                            debugCube.visible = true;
+                        }
+
+                        status.innerText = "HANDS VISIBLE. Z-DEPTH: " + z.toFixed(2);
                     }
                 });
             } else {
-                status.innerText = "SHOW HANDS TO CAMERA";
+                status.innerText = "SEARCHING FOR HANDS...";
             }
             rendererL.render(scene, camera);
             rendererR.render(scene, camera);
@@ -113,7 +120,6 @@
 
         async function start() {
             document.getElementById('overlay').style.display = 'none';
-            // Use environment camera so you can hold the phone like a viewfinder
             const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment"}});
             video.srcObject = stream;
             await video.play();
