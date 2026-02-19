@@ -6,64 +6,67 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .view-container { display: flex; width: 100vw; height: 100vh; }
         .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #333; }
         .bg-canvas { width: 100%; height: 100%; object-fit: cover; position: absolute; }
         .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 10; pointer-events: none; }
         video { display: none; }
-        #btn { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 20px 40px; background: #fff; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; }
+        #overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            z-index: 1000; display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.7); color: white; text-align: center;
+        }
     </style>
 </head>
 <body>
-    <button id="btn">ENTER VR ISLAND</button>
+    <div id="overlay"><h1>TAP ANYWHERE TO ENTER ISLAND</h1></div>
+    
     <video id="input_video" playsinline muted></video>
     <div class="view-container">
-        <div class="view" id="view_l"><canvas class="bg-canvas" id="bg_l"></canvas></div>
-        <div class="view" id="view_r"><canvas class="bg-canvas" id="bg_r"></canvas></div>
+        <div class="view"><canvas class="bg-canvas" id="bg_l"></canvas></div>
+        <div class="view"><canvas class="bg-canvas" id="bg_r"></canvas></div>
     </div>
 
     <script>
         const video = document.getElementById('input_video');
+        const overlay = document.getElementById('overlay');
         const bgCanvases = [document.getElementById('bg_l'), document.getElementById('bg_r')];
         const bgCtxs = bgCanvases.map(c => c.getContext('2d'));
         
         let scene, camera, rendererL, rendererR;
-        let pointerL, pointerR;
-        let uiButtons = [];
+        let pointer;
+        let islands = [];
 
         function init3D() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.1, 1000);
             camera.position.z = 2;
 
-            // 1. Create the "Floating Island" (UI Panel)
-            const panelGeo = new THREE.RoundedRectGeometry ? new THREE.BoxGeometry(1.2, 0.8, 0.05) : new THREE.BoxGeometry(1.2, 0.8, 0.05);
-            const panelMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.2 });
-            const panel = new THREE.Mesh(panelGeo, panelMat);
-            panel.position.set(0, 0, 0);
-            scene.add(panel);
+            // Ambient Light
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-            // 2. Add some "Floating Buttons"
-            const colors = [0xff00cc, 0x00ffcc, 0xffff00];
-            for(let i = 0; i < 3; i++) {
-                const btnGeo = new THREE.SphereGeometry(0.1, 32, 32);
-                const btnMat = new THREE.MeshStandardMaterial({ color: colors[i], emissive: colors[i], emissiveIntensity: 0.5 });
-                const btn = new THREE.Mesh(btnGeo, btnMat);
-                btn.position.set(-0.4 + (i * 0.4), 0, 0.1);
-                scene.add(btn);
-                uiButtons.push(btn);
+            // Create Floating UI Elements (Islands)
+            const geo = new THREE.IcosahedronGeometry(0.2, 0);
+            for(let i = 0; i < 4; i++) {
+                const mat = new THREE.MeshPhongMaterial({ 
+                    color: 0x00d2ff, 
+                    emissive: 0x0055ff, 
+                    shininess: 100,
+                    flatShading: true 
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(Math.cos(i) * 0.8, Math.sin(i) * 0.5, 0.5);
+                scene.add(mesh);
+                islands.push(mesh);
             }
 
-            // 3. Pointer (Index Finger Tip)
-            const pGeo = new THREE.SphereGeometry(0.03, 16, 16);
-            pointerL = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({color: 0xffffff}));
-            pointerR = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({color: 0xffffff}));
-            scene.add(pointerL, pointerR);
-
-            const light = new THREE.PointLight(0xffffff, 1, 10);
-            light.position.set(0, 2, 2);
-            scene.add(light, new THREE.AmbientLight(0xffffff, 0.5));
+            // Index Finger Pointer
+            pointer = new THREE.Mesh(
+                new THREE.SphereGeometry(0.04, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
+            );
+            scene.add(pointer);
 
             rendererL = new THREE.WebGLRenderer({ alpha: true, antialias: true });
             rendererR = new THREE.WebGLRenderer({ alpha: true, antialias: true });
@@ -74,7 +77,7 @@
         }
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
 
         hands.onResults((results) => {
             bgCtxs.forEach((ctx, i) => {
@@ -82,29 +85,25 @@
                 ctx.drawImage(results.image, 0, 0);
             });
 
-            pointerL.visible = pointerR.visible = false;
+            pointer.visible = false;
 
-            if (results.multiHandLandmarks) {
-                results.multiHandLandmarks.forEach((landmarks, index) => {
-                    const label = results.multiHandedness[index].label;
-                    const pointer = label === "Left" ? pointerL : pointerR;
-                    pointer.visible = true;
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                pointer.visible = true;
+                const tip = landmarks[8]; // Index Tip
+                
+                // Map tracking to 3D space
+                pointer.position.set((tip.x - 0.5) * 4, -(tip.y - 0.5) * 3, -tip.z * 2);
 
-                    // Track Index Finger Tip (Landmark 8)
-                    const tip = landmarks[8];
-                    pointer.position.set((tip.x - 0.5) * 3, -(tip.y - 0.5) * 2, -tip.z * 5);
-
-                    // Collision Detection (Interaction)
-                    uiButtons.forEach(btn => {
-                        const dist = pointer.position.distanceTo(btn.position);
-                        if(dist < 0.15) {
-                            btn.scale.set(1.3, 1.3, 1.3);
-                            btn.material.emissiveIntensity = 2;
-                        } else {
-                            btn.scale.set(1, 1, 1);
-                            btn.material.emissiveIntensity = 0.5;
-                        }
-                    });
+                // Interaction: Rotate islands when "touched"
+                islands.forEach(isl => {
+                    const dist = pointer.position.distanceTo(isl.position);
+                    if(dist < 0.25) {
+                        isl.rotation.y += 0.1;
+                        isl.scale.set(1.2, 1.2, 1.2);
+                    } else {
+                        isl.scale.set(1, 1, 1);
+                    }
                 });
             }
             rendererL.render(scene, camera);
@@ -112,16 +111,19 @@
         });
 
         async function start() {
-            document.getElementById('btn').style.display = 'none';
+            overlay.style.display = 'none';
             const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment"}});
             video.srcObject = stream;
             await video.play();
             const loop = async () => { await hands.send({image: video}); requestAnimationFrame(loop); };
             loop();
+            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
         }
 
         init3D();
-        document.getElementById('btn').onclick = start;
+        // Start on ANY tap
+        window.addEventListener('click', start, {once: true});
+        window.addEventListener('touchstart', start, {once: true});
     </script>
 </body>
 </html>
