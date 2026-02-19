@@ -11,14 +11,14 @@
         .view-container { display: flex; width: 100vw; height: 100vh; }
         .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #222; }
         .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 10; }
-        video { display: none; }
         #status { position: fixed; top: 10px; width: 100%; text-align: center; color: #0f0; z-index: 2000; background: rgba(0,0,0,0.5); }
         #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; display: flex; align-items: center; justify-content: center; background: #000; color: #00ffcc; cursor: pointer; }
+        video { display: none; }
     </style>
 </head>
 <body>
-    <div id="status">WAITING...</div>
-    <div id="overlay"><h1>[ CLICK TO RE-CENTER & START ]</h1></div>
+    <div id="status">LOADING ROOM...</div>
+    <div id="overlay"><h1>[ CLICK TO START VR ]</h1></div>
     <video id="input_video" playsinline muted></video>
     <div class="view-container">
         <div class="view" id="view_l"></div>
@@ -29,44 +29,50 @@
         const video = document.getElementById('input_video');
         const status = document.getElementById('status');
         let scene, camera, rendererL, rendererR;
-        let leftHand, rightHand, debugCube;
+        
+        // Storage for smooth skeletal data
+        let handData = {
+            Left: { joints: [], bones: [], visible: false },
+            Right: { joints: [], bones: [], visible: false }
+        };
+
+        const pairs = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
         function init3D() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.01, 1000);
-            camera.position.set(0, 0, 0); // Camera at origin
+            camera.position.set(0, 0, 0);
 
             scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-            const light = new THREE.PointLight(0xffffff, 2);
-            light.position.set(0, 2, 1);
-            scene.add(light);
 
-            // Debug Cube - If you see this, tracking is working
-            debugCube = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({color: 0xff0000}));
-            scene.add(debugCube);
-
-            const loader = new THREE.GLTFLoader();
-
-            // Load World - Scale it down and move it so it's a floor
-            loader.load('liminal.glb', (gltf) => {
+            // Load Liminal Space
+            new THREE.GLTFLoader().load('liminal.glb', (gltf) => {
                 const world = gltf.scene;
-                world.position.set(0, -1.6, -3); 
-                world.scale.set(0.01, 0.01, 0.01); // Shrink it in case it's huge
+                world.position.set(0, -1.6, -4); 
+                world.scale.set(0.01, 0.01, 0.01); 
                 scene.add(world);
-                status.innerText = "WORLD READY";
+                status.innerText = "SKELETON READY. TAP START.";
             });
 
-            // Load Hands with specific visibility settings
-            loader.load('hand_for_vr.glb', (gltf) => {
-                leftHand = gltf.scene;
-                leftHand.scale.set(0.5, 0.5, 0.5); // Large enough to see
-                scene.add(leftHand);
-
-                rightHand = leftHand.clone();
-                rightHand.scale.x *= -1;
-                scene.add(rightHand);
+            // Setup Skeleton Objects for both hands
+            ["Left", "Right"].forEach(side => {
+                const color = side === "Left" ? 0x00ffff : 0xff00ff;
                 
-                leftHand.visible = rightHand.visible = false;
+                // Create 21 joints (spheres)
+                for(let i=0; i<21; i++) {
+                    const j = new THREE.Mesh(new THREE.SphereGeometry(0.01, 8, 8), new THREE.MeshBasicMaterial({color: 0xffffff}));
+                    j.visible = false;
+                    scene.add(j);
+                    handData[side].joints.push(j);
+                }
+                
+                // Create bone tubes
+                pairs.forEach(() => {
+                    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 1), new THREE.MeshBasicMaterial({color: color}));
+                    b.visible = false;
+                    scene.add(b);
+                    handData[side].bones.push(b);
+                });
             });
 
             rendererL = new THREE.WebGLRenderer({ antialias: true });
@@ -78,45 +84,52 @@
         }
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5 });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
 
         hands.onResults((results) => {
-            if (leftHand) leftHand.visible = false;
-            if (rightHand) rightHand.visible = false;
-            debugCube.visible = false;
+            handData.Left.visible = false;
+            handData.Right.visible = false;
 
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            if (results.multiHandLandmarks) {
                 results.multiHandLandmarks.forEach((landmarks, index) => {
-                    const isRight = results.multiHandedness[index].label === 'Right';
-                    const model = isRight ? rightHand : leftHand;
+                    const side = results.multiHandedness[index].label;
+                    handData[side].visible = true;
                     
-                    if (model) {
-                        const wrist = landmarks[0];
+                    landmarks.forEach((pt, i) => {
+                        // Smoothly interpolate current joint position to new target
+                        const targetPos = new THREE.Vector3((pt.x - 0.5) * 3, -(pt.y - 0.5) * 2, -0.7 - (pt.z * 2));
+                        handData[side].joints[i].position.lerp(targetPos, 0.3); // 0.3 = smoothing factor
+                    });
+                });
+            }
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            ["Left", "Right"].forEach(side => {
+                const data = handData[side];
+                data.joints.forEach(j => j.visible = data.visible);
+                
+                data.bones.forEach((bone, i) => {
+                    bone.visible = data.visible;
+                    if(data.visible) {
+                        const start = data.joints[pairs[i][0]].position;
+                        const end = data.joints[pairs[i][1]].position;
                         
-                        // NEW TRACKING MATH
-                        // Places hands exactly 0.5 to 1.0 units in front of the camera
-                        const x = (wrist.x - 0.5) * 2;
-                        const y = -(wrist.y - 0.5) * 1.5;
-                        const z = -0.5 - (wrist.z * 2);
-
-                        model.position.set(x, y, z);
-                        model.visible = true;
-
-                        // Move debug cube to the first detected hand
-                        if(index === 0) {
-                            debugCube.position.set(x, y + 0.2, z);
-                            debugCube.visible = true;
-                        }
-
-                        status.innerText = "HANDS VISIBLE. Z-DEPTH: " + z.toFixed(2);
+                        // Stretch and rotate bone between joints
+                        bone.position.copy(start.clone().lerp(end, 0.5));
+                        bone.scale.set(1, start.distanceTo(end), 1);
+                        bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
                     }
                 });
-            } else {
-                status.innerText = "SEARCHING FOR HANDS...";
+            });
+
+            if (rendererL && rendererR) {
+                rendererL.render(scene, camera);
+                rendererR.render(scene, camera);
             }
-            rendererL.render(scene, camera);
-            rendererR.render(scene, camera);
-        });
+        }
 
         async function start() {
             document.getElementById('overlay').style.display = 'none';
@@ -125,6 +138,7 @@
             await video.play();
             const loop = async () => { await hands.send({image: video}); requestAnimationFrame(loop); };
             loop();
+            animate();
         }
 
         init3D();
