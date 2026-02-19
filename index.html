@@ -7,20 +7,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: monospace; }
         .view-container { display: flex; width: 100vw; height: 100vh; }
-        .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #111; }
+        .view { width: 50%; height: 100%; position: relative; overflow: hidden; border-right: 1px solid #222; }
         .fg-canvas { width: 100%; height: 100%; position: absolute; z-index: 10; }
         video { display: none; }
+        #status { position: fixed; top: 10px; width: 100%; text-align: center; color: #0f0; z-index: 2000; pointer-events: none; }
         #overlay { 
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             z-index: 1000; display: flex; align-items: center; justify-content: center;
-            background: #000; color: #00ffcc; font-family: monospace; cursor: pointer;
+            background: #000; color: #00ffcc; cursor: pointer;
         }
     </style>
 </head>
 <body>
-    <div id="overlay"><h1>[ CLICK TO ENTER LIMINAL SPACE ]</h1></div>
+    <div id="status">INITIATING...</div>
+    <div id="overlay"><h1>[ TAP TO ENTER ]</h1></div>
     <video id="input_video" playsinline muted></video>
     <div class="view-container">
         <div class="view" id="view_l"></div>
@@ -29,35 +31,40 @@
 
     <script>
         const video = document.getElementById('input_video');
+        const status = document.getElementById('status');
         let scene, camera, rendererL, rendererR;
-        let leftHand, rightHand;
-        let world;
+        let leftHand, rightHand, world;
 
         function init3D() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.1, 1000);
-            
-            // Lighting for the room
-            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-            const sun = new THREE.DirectionalLight(0xffffff, 1);
-            sun.position.set(5, 10, 7);
-            scene.add(sun);
+            camera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 0.01, 1000);
+            camera.position.set(0, 0, 0.5); // Camera starts slightly back
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+            const light = new THREE.PointLight(0xffffff, 1);
+            light.position.set(0, 2, 1);
+            scene.add(light);
 
             const loader = new THREE.GLTFLoader();
 
-            // 1. Load the Environment
+            // Load World: Pushed further down and away so it doesn't hide hands
             loader.load('liminal.glb', (gltf) => {
                 world = gltf.scene;
-                world.position.set(0, -1.5, -2); // Position the floor below the camera
+                world.position.set(0, -2, -5); 
+                world.scale.set(0.5, 0.5, 0.5);
                 scene.add(world);
+                status.innerText = "ROOM LOADED. WAITING FOR HANDS...";
             });
 
-            // 2. Load and Prepare Hands
+            // Load Hands
             loader.load('hand_for_vr.glb', (gltf) => {
                 leftHand = gltf.scene;
-                leftHand.scale.set(0.1, 0.1, 0.1);
+                leftHand.scale.set(0.2, 0.2, 0.2); // Scaled up slightly to be visible
+                
+                // Add a glow so we can see them in the dark room
+                leftHand.traverse(n => { if(n.isMesh) n.material.emissive = new THREE.Color(0x00ffff); });
+                
                 scene.add(leftHand);
-
                 rightHand = leftHand.clone();
                 rightHand.scale.x *= -1;
                 scene.add(rightHand);
@@ -74,13 +81,14 @@
         }
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7 });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5 });
 
         hands.onResults((results) => {
             if (leftHand) leftHand.visible = false;
             if (rightHand) rightHand.visible = false;
 
-            if (results.multiHandLandmarks) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                status.innerText = "HANDS DETECTED";
                 results.multiHandLandmarks.forEach((landmarks, index) => {
                     const isRight = results.multiHandedness[index].label === 'Right';
                     const model = isRight ? rightHand : leftHand;
@@ -88,20 +96,16 @@
                     if (model) {
                         model.visible = true;
                         const wrist = landmarks[0];
-                        const indexBase = landmarks[5];
-                        
-                        // Map tracking to 3D Space (adjusting for the room's scale)
+                        // Map coordinates to be directly in front of the camera (0.5 to 1.5 units away)
                         model.position.set(
-                            (wrist.x - 0.5) * 3, 
-                            -(wrist.y - 0.5) * 2, 
-                            -wrist.z * 4 - 0.5 // Push hands slightly away from face
+                            (wrist.x - 0.5) * 2, 
+                            -(wrist.y - 0.5) * 1.5, 
+                            -wrist.z * 2 - 0.8 
                         );
-
-                        // Simple Rotation
-                        const angle = Math.atan2(indexBase.y - wrist.y, indexBase.x - wrist.x);
-                        model.rotation.z = angle + (isRight ? 1.6 : -1.6);
                     }
                 });
+            } else {
+                status.innerText = "SHOW HANDS TO CAMERA";
             }
             rendererL.render(scene, camera);
             rendererR.render(scene, camera);
@@ -109,12 +113,12 @@
 
         async function start() {
             document.getElementById('overlay').style.display = 'none';
-            const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "user"}});
+            // Use environment camera so you can hold the phone like a viewfinder
+            const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "environment"}});
             video.srcObject = stream;
             await video.play();
             const loop = async () => { await hands.send({image: video}); requestAnimationFrame(loop); };
             loop();
-            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
         }
 
         init3D();
